@@ -160,8 +160,21 @@ namespace WindowsFormsApplication1
             }
                 
         }
+        string ex_message;
+        void Write_String(string str, int lng)
+        {
+            int crc16 = Calc_CRC(str.ToCharArray(), lng);
+            str += crc16.ToString();
+            try
+            {
+                COM.Write(str);
+            }
+            catch(Exception ex)
+            {
+                ex_message = ex.Message;
+            }
 
-
+        }
         private void Form_Update_DoWork(object sender, DoWorkEventArgs e)
         {
             while (true)
@@ -198,11 +211,7 @@ namespace WindowsFormsApplication1
             return param_crc_update_crc16(crc, b, 0x8005, true);
         }
         byte reverse8(byte value)
-        // Reverses bit order in the byte. More more information 
-        // see Henry S.Warren "Hacker's Delight"
-        // param: value byte to be reversed
-        // return: Reversed value of input byte. 
-        // E.g. if input was 0xAC (10101100b) then output will be 0x35 (00110101b)
+
         {
             value = (byte)((value & 0x55) << 1 | (value & 0xAA) >> 1);
             value = (byte)((value & 0x33) << 2 | (value & 0xCC) >> 2);
@@ -210,10 +219,7 @@ namespace WindowsFormsApplication1
 
             return value;
         }
-        UInt16 param_crc_update_crc16(UInt16 crc,
-                                  byte b,
-                                  UInt16 poly,
-                                  bool reflectIn)
+        UInt16 param_crc_update_crc16(UInt16 crc, byte b, UInt16 poly, bool reflectIn)
         {
             UInt16 j;
 
@@ -278,12 +284,31 @@ namespace WindowsFormsApplication1
                         //не перезапустился
                     }
                     else if (buf[2] == DATA_OK)
-                    { 
-                    //перезапустился
+                    {
+                        //перезапустился
+                        status = Status.reset;
                     }
                  break;
+                case (char)WAIT_FW:
+                    string st = string.Format("{0}{1}", ADDR, DOWNLOAD_CMD);
+                    Write_String(st, st.Length);
+                    status = Status.download;
+                break;
                 case (char)DOWNLOAD_CMD:
-
+                    if (buf[3] == DATA_OK)
+                    {
+                        char[] tmp = new char[lng];
+                        for (int i = 2; i < lng; lng++)
+                        {
+                            tmp[i - 2] = buf[i];
+                        }
+                        ulong data_buf_lng = UInt64.Parse(tmp.ToString());
+                        //начало перепрошивки
+                    }
+                    else
+                    {
+                        status = Status.wait;
+                    }
                 break;
 
             }

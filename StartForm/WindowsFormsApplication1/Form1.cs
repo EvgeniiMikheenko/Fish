@@ -39,12 +39,16 @@ namespace WindowsFormsApplication1
             COM_Update.DoWork += COM_Update_DoWork;
             COM_Update.ProgressChanged += COM_Update_ProgressChanged;
             COM_Update.RunWorkerAsync();
+
+            stateCOM = COMState.Idle;
+            stateForm = WorkState.Idle;
+   
         }
 
 
 
 
-
+        PacketData Recv_Packet = new PacketData();
         private void COM_Update_ProgressChanged(object sender, ProgressChangedEventArgs e)
         {
             throw new NotImplementedException();
@@ -56,6 +60,7 @@ namespace WindowsFormsApplication1
         int page = 0;
         char[] send_buff = new char[2767];
         int pg_count = 0;
+        static int sended_page = 0;
         private void COM_Update_DoWork(object sender, DoWorkEventArgs e)
         {
             while (true)
@@ -76,16 +81,98 @@ namespace WindowsFormsApplication1
                     case COMState.Start_Upload:
                         pg_count = Get_PGCount();
 
+
+
+                        break;
+                    case COMState.Wait:
+                        if (new_msg == RECV_MSG.New)
+                        {
+                            if (Parce_msg(rbuff, recv_msg_length, Recv_Packet))
+                            {
+                                if (Recv_Packet.CMD == WAIT_FW_CMD)
+                                {
+
+                                    stateCOM = COMState.Info_read;
+                                    
+                                    Write_Message(ADDR, DOWNLOAD_CMD, Test_data);
+                                    stateForm = WorkState.Update;
+                                }
+                            }
+                        }
+                        break;
+                    case COMState.Info_read:
+                        if (new_msg == RECV_MSG.New)
+                        {
+                            if (Parce_msg(rbuff, recv_msg_length, Recv_Packet))
+                            {
+                                if (Recv_Packet.CMD == DOWNLOAD_CMD)
+                                {
+                                    if (Get_RECV_BUF_LNG(Recv_Packet))
+                                    {
+                                        if ((fileText != null) && (Recv_Packet.buf_lng > 0))
+                                        {
+                                            stateCOM = COMState.Send_data_page;
+                                            Write_Message(ADDR, RECV_FW_CMD, List_of_pages[sended_page]);
+                                            if (List_of_pages.Count > (sended_page + 1))
+                                                sended_page++;
+                                            stateForm = WorkState.Update;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    case COMState.Send_data_page:
+                        if (new_msg == RECV_MSG.New)
+                        {
+                            if (Parce_msg(rbuff, recv_msg_length, Recv_Packet))
+                            {
+                                if (Recv_Packet.CMD == RECV_FW_CMD)
+                                {
+                                    if (Recv_Packet.Data[3] == DATA_OK)
+                                    {
+                                        Write_Message(ADDR, RECV_FW_CMD, List_of_pages[sended_page]);
+                                        if (List_of_pages.Count > (sended_page + 1))
+                                            sended_page++;
+                                        stateForm = WorkState.Update;
+                                    }
+                                    else if (Recv_Packet.Data[3] == DATA_NOK)
+                                    {
+                                        sended_page = Recv_Packet.Data[4];     //неудачная страница
+                                        stateCOM = COMState.Send_data_page;
+                                        Write_Message(ADDR, RECV_FW_CMD, List_of_pages[sended_page]);
+                                        if (List_of_pages.Count > (sended_page + 1))
+                                            sended_page++;
+                                        stateForm = WorkState.Update;
+                                    }
+                                    else if (Recv_Packet.Data[3] == DATA_END)    //конец записи
+                                    {
+                                        stateCOM = COMState.Info_write;
+                                        Write_Message(ADDR, NEW_INFO_CMD, Test_data);
+                                        stateForm = WorkState.Update;
+                                    }
+                                }
+                            }
+                        }
+                
+                     break;
+                    case COMState.Info_write:
+
                         break;
                 }
                Thread.Sleep(200);
             }
+
+            
+
 
                 
         }
         const byte ADDR = 0x01;
         const byte DATA_OK = 0x55;
         const byte DATA_NOK = 0xFF;
+        const byte DATA_END = 0xAA;
+        byte[] Test_data = { 1, 5, 7 };
         enum Status{
             wait,
             reset,
@@ -97,18 +184,30 @@ namespace WindowsFormsApplication1
             new_info,
             new_info_errors
         }
+        bool Get_RECV_BUF_LNG(PacketData rPack)
+        {
+            if (Recv_Packet.Data[0] != DATA_OK)
+                return false;
+            else {
 
+                Recv_Packet.buf_lng = (ushort)(Recv_Packet.Data[1] + (Recv_Packet.Data[2]<<8));
+                if (Recv_Packet.buf_lng != 0)
+                    return true;
+                else
+                    return false;
+            }
+        }
         Status status = Status.wait;
-        
-        const byte WAIT_FW = 0x01;
+        UInt16 MCU_BUF_lng;
+        const byte WAIT_FW_CMD = 0x01;
         const byte RESET_CMD = 0x02;
         const byte DOWNLOAD_CMD = 0x03;
         const byte RECV_FW_CMD = 0x04;
         const byte NEW_INFO_CMD = 0x05;
-        int Get_PGCount()
+        ushort Get_PGCount()
         {
             int ans = fileText.Length;
-            int gg = 0;
+            ushort gg = 0;
             while (ans > 0)
             {
                 ans -= buff_size;
@@ -118,7 +217,7 @@ namespace WindowsFormsApplication1
         }
         void Write_FW(string str)
         {
-            while (fw_num < 150)
+            while (fw_num < buff_size)
             {
                 if (fw_num != 0 && fileText[fw_num] == ':')
                 {
@@ -161,15 +260,59 @@ namespace WindowsFormsApplication1
                 
         }
         string ex_message;
-        void Write_String(string str, int lng)
+        void Write_Message(byte addr, byte cmd, byte[] data)
         {
-            int crc16 = Calc_CRC(str.ToCharArray(), lng);
-            str += crc16.ToString();
+            byte[] tmp = new byte[data.Length + 2];
+            tmp[0] = addr;
+            tmp[1] = cmd;
+            Array.Copy(data, 0, tmp, 2, data.Length);
+            Write_String(tmp, tmp.Length);
+
+        }
+        void Write_Message(byte addr, byte cmd, string data)
+        {
+         //   byte[] tmp = Encoding.ASCII.GetBytes(data);
+            byte[] tmp = new byte[data.Length + 2];
+            tmp[0] = addr;
+            tmp[1] = cmd;
+
+            Array.Copy(Encoding.ASCII.GetBytes(data), 0, tmp, 2, data.Length);
+      //      string tmp = string.Format("{0}{1}", addr, cmd);
+       //     tmp += data;
+            Write_String(tmp, tmp.Length);
+
+        }
+
+        void Write_String(byte[]  str, int lng)
+        {
+            int crc16 = Calc_CRC(str, lng);
+            byte[] tmp = new byte[str.Length + 2];
+            Array.Copy(str, 0, tmp, 0, lng);
+            tmp[tmp.Length - 2] = (byte)(crc16 & 0xFF);
+            tmp[tmp.Length - 1] = (byte)((crc16 >> 8) & 0xFF);
             try
             {
-                COM.Write(str);
+                COM.Write(tmp, 0, tmp.Length);
             }
             catch(Exception ex)
+            {
+                ex_message = ex.Message;
+            }
+
+        }
+        void Write_String(string str, int lng)
+        {
+            byte[] tmp_S = Encoding.ASCII.GetBytes(str);
+            int crc16 = Calc_CRC(tmp_S, lng);
+            byte[] tmp = new byte[str.Length + 2];
+            Array.Copy(tmp_S, 0, tmp, 0, lng);
+            tmp[tmp.Length - 2] = (byte)(crc16 & 0xFF);
+            tmp[tmp.Length - 1] = (byte)((crc16 >> 8) & 0xFF);
+            try
+            {
+                COM.Write(tmp, 0, tmp.Length);
+            }
+            catch (Exception ex)
             {
                 ex_message = ex.Message;
             }
@@ -184,21 +327,21 @@ namespace WindowsFormsApplication1
                     case WorkState.Idle:
                         break;
                     case WorkState.Update:
-                        if (new_msg)
-                        {
-                            //  Filtr_lbl.Text = rbuff.ToString();
+                        //if (new_msg)
+                        //{
+                        //    //  Filtr_lbl.Text = rbuff.ToString();
 
-                            Filtr_lbl.Invoke((MethodInvoker)delegate
-                            {
-                                string msg = new string(rbuff);
-                                Filtr_lbl.Text = msg;
-                            });
-                            Parce_msg(rbuff, recv_msg_length);
+                        //    Filtr_lbl.Invoke((MethodInvoker)delegate
+                        //    {
+                        //        string msg = new string(rbuff);
+                        //        Filtr_lbl.Text = msg;
+                        //    });
+                        //    Parce_msg(rbuff, recv_msg_length);
 
-                            //                          stateForm = WorkState.Idle;
-                            new_msg = false;
-                            recv_msg_length = 0;
-                        }
+                        //    //                          stateForm = WorkState.Idle;
+                        //    new_msg = false;
+                        //    recv_msg_length = 0;
+                        //}
                         break;
 
 
@@ -244,65 +387,117 @@ namespace WindowsFormsApplication1
 
             return crc;
         }
-        int Calc_CRC(char[] buf, int lng)
+        int Calc_CRC(byte[] buf, int lng)
         {
             UInt16 crc16 = 0xFFFF;
             for (int i = 0; i < lng; i++)
             {
-                crc16 = param_crc16_update(crc16, (byte)buf[i]);
+                crc16 = param_crc16_update(crc16, buf[i]);
             }
+
+            crc16 = param_crc16_finit(crc16);
             return crc16;
         }
-        
-        bool Parce_msg(char[] buf, int lng )
+        public struct PacketData
+        {
+           public byte CMD;
+           public byte[] Data;
+           public ushort buf_lng;
+        };
+
+        UInt16 param_crc16_finit(UInt16 crc)
+        {
+            crc = Reverse16(crc);
+            return crc ^= 0x0000;
+        }
+        UInt16 Reverse16(UInt16 value)
+        {
+            value = (UInt16)((value & 0x5555) << 1 | (value & 0xAAAA) >> 1);
+            value = (UInt16)((value & 0x3333) << 2 | (value & 0xCCCC) >> 2);
+            value = (UInt16)((value & 0x0F0F) << 4 | (value & 0xF0F0) >> 4);
+            value = (UInt16)((value & 0x00FF) << 8 | (value & 0xFF00) >> 8);
+
+            return value;
+        }
+
+        bool Parce_msg(byte[] buf, int lng, PacketData rPack )
         {
             if (lng > 0)
             {
                 if (Calc_CRC(buf, lng) != 0)
+                {
+                    new_msg = RECV_MSG.Idle;
+             //       recv_msg_length = 0;
                     return false;
+                }
                 if (buf[0] != ADDR)
+                {
+                    new_msg = RECV_MSG.Idle;
+              //      recv_msg_length = 0;
                     return false;
-                if (buf[1] != (RESET_CMD | DOWNLOAD_CMD | RECV_FW_CMD | NEW_INFO_CMD))
+                }
+                if ((buf[1] != RESET_CMD || buf[1] != DOWNLOAD_CMD || buf[1] != RECV_FW_CMD || buf[1] != NEW_INFO_CMD) == false )
+                {
+                    new_msg = RECV_MSG.Idle;
+             //       recv_msg_length = 0;
                     return false;
+                }
 
-                Parce_cmd(buf, lng);
+                Recv_Packet.CMD = (byte)buf[1];
+                try
+                {
+                    byte[] tmp = new byte[lng - 4];
+                    Array.Copy(buf, 2, tmp, 0, lng - 4);
+                    Recv_Packet.Data = tmp;
+                }
+                catch(Exception ex)
+                {
+                    ex_message = ex.Message;
+                }
+
+                new_msg = RECV_MSG.Idle;
+          //      recv_msg_length = 0;
+                return true;
+                //Parce_cmd(buf, lng, rPack);
                 
             }
 
+            return false;
 
 
-            return true;
         }
 
-        void Parce_cmd(char[] buf, int lng)
+        void Parce_cmd(PacketData rPack)
         {
-            switch (buf[1])
+            switch (rPack.Data[1])
             {
-                case (char)RESET_CMD:
-                    if (buf[2] == DATA_NOK)
+                case RESET_CMD:
+                    if (rPack.Data[2] == DATA_NOK)
                     {
                         //не перезапустился
                     }
-                    else if (buf[2] == DATA_OK)
+                    else if (rPack.Data[2] == DATA_OK)
                     {
                         //перезапустился
                         status = Status.reset;
                     }
                  break;
-                case (char)WAIT_FW:
+                case WAIT_FW_CMD:
                     string st = string.Format("{0}{1}", ADDR, DOWNLOAD_CMD);
-                    Write_String(st, st.Length);
+                 //   Write_String(st, st.Length);
                     status = Status.download;
                 break;
-                case (char)DOWNLOAD_CMD:
-                    if (buf[3] == DATA_OK)
+                case DOWNLOAD_CMD:
+                    if (rPack.Data[3] == DATA_OK)
                     {
-                        char[] tmp = new char[lng];
-                        for (int i = 2; i < lng; lng++)
+                        char[] tmp = new char[rPack.Data.Length];
+                        for (int i = 2; i < rPack.Data.Length; i++)
                         {
-                            tmp[i - 2] = buf[i];
+                            tmp[i - 2] = (char)rPack.Data[i];
                         }
                         ulong data_buf_lng = UInt64.Parse(tmp.ToString());
+
+
                         //начало перепрошивки
                     }
                     else
@@ -345,54 +540,54 @@ namespace WindowsFormsApplication1
         }
         public State state { get; set; }
         ushort[] rdBuf;
-        private bool ModbusUpdate()
-        {
-            try
-            {
-                lock (m_syncObject)
-                {
-                    switch (state)
-                    {
-                        case State.Read:
-                            try
-                            {
-                                rdBuf = m_mbMaster.ReadHoldingRegisters(0x01, 0x00, 1);
-                                state = State.New;
-                            }
-                            catch
-                            {
-                                m_lastError = "Ошибка чтения";
-                                return false;
-                            }
-                            break;
-                        case State.Write:
-                            try
-                            {
-                                state = State.Set;
-                            }
-                            catch (Exception ex)
-                            {
-                                return false;
-                            }
-                            break;
-                        case State.New:
-                            break;
-                        case State.Set:
-                            state = State.Read;
-                            break;
-                    }
+       // private bool ModbusUpdate()
+        //{
+        //    try
+        //    {
+        //        lock (m_syncObject)
+        //        {
+        //            switch (state)
+        //            {
+        //                case State.Read:
+        //                    try
+        //                    {
+        //                        rdBuf = m_mbMaster.ReadHoldingRegisters(0x01, 0x00, 1);
+        //                        state = State.New;
+        //                    }
+        //                    catch
+        //                    {
+        //                        m_lastError = "Ошибка чтения";
+        //                        return false;
+        //                    }
+        //                    break;
+        //                case State.Write:
+        //                    try
+        //                    {
+        //                        state = State.Set;
+        //                    }
+        //                    catch (Exception ex)
+        //                    {
+        //                        return false;
+        //                    }
+        //                    break;
+        //                case State.New:
+        //                    break;
+        //                case State.Set:
+        //                    state = State.Read;
+        //                    break;
+        //            }
 
 
-                }
+        //        }
 
-                return true;
-            }
-            catch (Exception ex)
-            {
-                m_lastError = ex.Message;
-                return false;
-            }
-        }
+        //        return true;
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        m_lastError = ex.Message;
+        //        return false;
+        //    }
+        //}
 
 
 
@@ -407,7 +602,13 @@ namespace WindowsFormsApplication1
             Read,
             Write,
             Idle,
-            Start_Upload
+            Start_Upload,
+            Wait, 
+            Reset,
+            Info_read,
+            Send_data_page,
+            Resend_data_page,
+            Info_write
         }
         bool is_connected = false;
         bool is_open = false;
@@ -516,6 +717,7 @@ namespace WindowsFormsApplication1
                     Filtr_lbl.Invoke((MethodInvoker)delegate
                     {
                         Filtr_lbl.Text = "Подключен";
+                        stateCOM = COMState.Wait;
                     });
                 }
                 catch (Exception ex)
@@ -526,18 +728,29 @@ namespace WindowsFormsApplication1
 
             }
         }
-        char[] rbuff = new char[10000];
-        bool new_msg = false;
+        byte[] rbuff = new byte[10000];
+        enum RECV_MSG
+        {
+            New,
+            InProgress,
+            Idle
+        }
+        RECV_MSG new_msg = RECV_MSG.Idle;
         int recv_msg_length = 0;
         private void COM_DataReceived(object sender, System.IO.Ports.SerialDataReceivedEventArgs e)
         {
-            if (!new_msg)
+            if (new_msg != RECV_MSG.New)
             { 
-                timer.Stop();
-                recv_msg_length += COM.Read(rbuff, recv_msg_length, 100);
-                timer.Start();
+                recv_msg_length = COM.Read(rbuff, 0, 100);
+                new_msg = RECV_MSG.InProgress;
             }
-           // new_msg = true;
+            timer.Interval = 1000;
+            timer.Enabled = true;
+            timer.Start();
+            new_msg = RECV_MSG.New;
+          //  recv_msg_length = 0;
+            timer.Enabled = false;
+
         }
 
         private void button1_Click(object sender, EventArgs e)
@@ -546,6 +759,9 @@ namespace WindowsFormsApplication1
         }
         bool is_file = false;
         string fileText;
+        string[] pages;
+        List<string> List_of_pages = new List<string>();
+
         private void fopen_Click(object sender, EventArgs e)
         {
             if (openFileDialog1.ShowDialog() == DialogResult.Cancel)
@@ -573,9 +789,9 @@ namespace WindowsFormsApplication1
             is_file = true;
 
 
-            int lggggsdf = fileText.Length;
+            
 
-            while (fw_num < lggggsdf)
+            while (fw_num < fileText.Length)
             {
                 if (fw_num != 0 && fileText[fw_num] == ':')
                 {
@@ -629,9 +845,22 @@ namespace WindowsFormsApplication1
                                 richTextBox7.Text += "|||";
                             });
                         }
-                        char[] strt = string.Format("!{0}@{1}#", page++, fw_send_ind).ToCharArray();
-                        
-                            Array.Clear(send_buff, 0, 2767);
+
+
+                        char[] strt = string.Format("!{0:D}@{1:D}#", page++, fw_send_ind).ToCharArray();
+                        char[] stt = new char[fw_send_ind + strt.Length];
+                        Array.Copy(send_buff, 0, stt, 0, fw_send_ind);
+                        Array.Copy(strt, 0, stt, fw_send_ind, strt.Length);
+                        string f = new string(stt);
+                        List_of_pages.Add(f);
+
+
+                        //char[] strt = string.Format("!{0}@{1}#", page++, fw_send_ind).ToCharArray();
+                        //string f = new string(send_buff);
+                        //f += strt;
+                        //LS.Add(f);
+
+                        Array.Clear(send_buff, 0, 2767);
                         
 
                         // int cha = strt.Length;
@@ -669,14 +898,28 @@ namespace WindowsFormsApplication1
                 }
                 
             }
-            if (fw_num == lggggsdf)
+            if (fw_num == fileText.Length)
             {
                 richTextBox6.Invoke((MethodInvoker)delegate
                 {
                     string s = new string(send_buff);
                     richTextBox6.Text += string.Format("!{0}@", page);
                     richTextBox6.Text += s;
+
+
+
                 });
+
+                char[] strt = string.Format("!{0}@{1}#", page++, fw_send_ind).ToCharArray();
+                char[] stt = new char[fw_send_ind + strt.Length];
+                Array.Copy(send_buff, 0, stt, 0, fw_send_ind);
+                Array.Copy(strt, 0, stt, fw_send_ind, strt.Length);
+                string f = new string(stt);
+                List_of_pages.Add(f);
+
+                int dsdfsd = List_of_pages.Capacity;
+
+
             }
 
 
@@ -696,11 +939,40 @@ namespace WindowsFormsApplication1
 
         private void timer_Tick(object sender, EventArgs e)
         {
+            //timer.Enabled = false;
+            //timer.Stop();
 
             if (recv_msg_length != 0)
             {
-                new_msg = true;
+                new_msg = RECV_MSG.New;
+      //          recv_msg_length = 0;
+                timer.Enabled = false;
+                timer.Stop();
             }
+        }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            Write_Message(ADDR, DOWNLOAD_CMD, Test_data);
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            // Write_Message(ADDR, RECV_FW_CMD, List_of_pages[sended_page]);
+
+            string rrtsdf = "14";
+
+            rrtsdf += List_of_pages[0];
+
+            byte[] sdfsdf = Encoding.ASCII.GetBytes(rrtsdf);
+
+            int dsfgdfg = Calc_CRC(sdfsdf, sdfsdf.Length);
+
+            int fgfgfg = List_of_pages[0].Length;
+            Write_Message(ADDR, RECV_FW_CMD, List_of_pages[0]);
+          //  COM.Write(List_of_pages[0]);
+          //  COM.Write(List_of_pages[0].ToCharArray(), 0, 500);
+
         }
     }
 }

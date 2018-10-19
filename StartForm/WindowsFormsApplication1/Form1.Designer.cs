@@ -47,6 +47,8 @@
             this.richTextBox6 = new System.Windows.Forms.RichTextBox();
             this.richTextBox7 = new System.Windows.Forms.RichTextBox();
             this.timer = new System.Windows.Forms.Timer(this.components);
+            this.button2 = new System.Windows.Forms.Button();
+            this.button3 = new System.Windows.Forms.Button();
             this.menuStrip1.SuspendLayout();
             this.SuspendLayout();
             // 
@@ -85,7 +87,8 @@
             // 
             // COM
             // 
-            this.COM.BaudRate = 115200;
+            this.COM.BaudRate = 57600;
+            this.COM.WriteBufferSize = 4096;
             this.COM.DataReceived += new System.IO.Ports.SerialDataReceivedEventHandler(this.COM_DataReceived);
             // 
             // Filtr_lbl
@@ -193,14 +196,36 @@
             // 
             // timer
             // 
-            this.timer.Interval = 3;
+            this.timer.Interval = 4;
             this.timer.Tick += new System.EventHandler(this.timer_Tick);
+            // 
+            // button2
+            // 
+            this.button2.Location = new System.Drawing.Point(368, 25);
+            this.button2.Name = "button2";
+            this.button2.Size = new System.Drawing.Size(75, 23);
+            this.button2.TabIndex = 14;
+            this.button2.Text = "hello";
+            this.button2.UseVisualStyleBackColor = true;
+            this.button2.Click += new System.EventHandler(this.button2_Click);
+            // 
+            // button3
+            // 
+            this.button3.Location = new System.Drawing.Point(547, 27);
+            this.button3.Name = "button3";
+            this.button3.Size = new System.Drawing.Size(75, 23);
+            this.button3.TabIndex = 15;
+            this.button3.Text = "hello";
+            this.button3.UseVisualStyleBackColor = true;
+            this.button3.Click += new System.EventHandler(this.button3_Click);
             // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(1479, 660);
+            this.Controls.Add(this.button3);
+            this.Controls.Add(this.button2);
             this.Controls.Add(this.richTextBox7);
             this.Controls.Add(this.richTextBox6);
             this.Controls.Add(this.richTextBox5);
@@ -244,7 +269,9 @@
         private System.Windows.Forms.RichTextBox richTextBox5;
         private System.Windows.Forms.RichTextBox richTextBox6;
         private System.Windows.Forms.RichTextBox richTextBox7;
-        private System.Windows.Forms.Timer timer;
+        public System.Windows.Forms.Timer timer;
+        private System.Windows.Forms.Button button2;
+        private System.Windows.Forms.Button button3;
     }
 }
 
